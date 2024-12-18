@@ -1,0 +1,348 @@
+import sys
+
+# IS 456:2000 Table 5 | "Exposure condition": [Minimum cement content in kg/m^3, Maximum water to cement ratio] 
+IS456_t5 = { "Mild": [300, 0.55], "Moderate": [300, 0.50], "Severe": [320, 0.45], "Very severe": [340, 0.45], "Extreme": [360, 0.40] }
+
+# IS 10262:2009 Table 1 | "Grade": Assumed Standard Deviation
+IS10262_t1 = { "M1": 3.5, "M2": 4.0, "M3_5": 5.0 }
+
+# IS 10262:2009 Table 2 | "Nominal Maximum Size Of Aggregate in mm": Maximum Water content in kg
+IS10262_t2 = { "10": 208, "20": 186, "40": 165 }
+
+# IS 10262:2009 Table 3 | "Nominal Maximum Size Of Aggregate in mm": (vol of coarse aggregates)[Zone 4, Zone 3, Zone 2, Zone 1]
+IS10262_t3 = { "10": [0.50, 0.48, 0.46, 0.44], "20": [0.66, 0.64, 0.62, 0.60], "40": [0.75, 0.73, 0.71, 0.69] }
+
+def target_strength_calculation(grade):
+    """Target Strength for Mix Propotioning"""
+    if grade == "M 10" or grade == "M 15":
+        g = "M1"
+    elif grade == "M 20" or grade == "M 25":
+        g = "M2"
+    else:
+        g = "M3_5"
+    
+    for x, s in IS10262_t1.items():
+        if x == g:
+            sd = s
+    
+    return int(grade.replace("M ",'')) + (1.65 * sd)
+
+def water_cement_ratio_calculation(exposure):
+    """Selection Of Water Cement Ratio"""
+    exp = exposure.capitalize()
+    for x, v in IS456_t5.items():
+        if x == exp:
+            wcr = v[1]
+    return wcr
+
+def water_content_calculation(slump, soa, toa, chem_ad):
+    """Selection Of Water Content"""
+    # Factor for convertion of water content of 50 mm slump to required slump
+    n = (int(slump) - 50) / 25
+    for x, v in IS10262_t2.items():
+        if x == soa:
+            water_content = v
+    if toa == "Sub-Angular":
+        water_content -= 10
+    elif toa == "Gravel":
+        water_content -= 20
+    elif toa == "Rounded Gravel":
+        water_content -= 25
+    
+    if int(slump) > 50:
+        water_content += (0.03 * n * water_content)
+
+    if chem_ad == "Super Plasticizer":
+        water_content -= water_content * 0.2
+    elif chem_ad == "Plasticizer":
+        water_content -= water_content * 0.1
+
+    return water_content
+
+def cement_content_calculation(exposure, wcr, wc):
+    """Calculation Of Cement Content"""
+    exp = exposure.capitalize()
+    for x, v in IS456_t5.items():
+        if x == exp:
+            min_cc = v[0]
+    
+    cement_content = wc/wcr
+
+    if cement_content < min_cc:
+        cement_content = min_cc
+    
+    return cement_content
+
+def fly_cement_content_calculation(exposure, wcr, wc):
+    """Calculation Of Cement and Fly Ash Content"""
+    exp = exposure.capitalize()
+    for x, v in IS456_t5.items():
+        if x == exp:
+            min_cc = v[0]
+    
+    cement_content = wc/wcr
+    temp1 = cement_content
+
+    if cement_content < min_cc:
+        cement_content = min_cc
+        temp1 = cement_content
+
+    cement_content *= 1.10
+
+    new_water_cement_ratio = wc/cement_content
+
+    flyash_content = cement_content * 0.3
+
+    temp2 = cement_content
+
+    temp2 -= flyash_content
+
+    if temp2 < 270:
+        i = 0.25
+        while True and i > 0:
+            temp2 = cement_content
+            flyash_content = temp2 * i
+            temp2 -= flyash_content
+            i -= 0.05
+            if temp2 >= 270:
+                print("\nPercentage of Fly Ash is {}%\n".format(int((i+0.05)*100)))
+                break
+            elif i < 0:
+                sys.exit("Mix is not possible!!(Cement < 270)")
+    
+    cement_content = temp2
+
+    cement_saved = temp1 - cement_content
+
+    return cement_content, flyash_content, cement_saved, new_water_cement_ratio
+
+def vol_of_CAnFA_calculation(zone, soa, wcr, pumping):
+    """Proportion Of Volume Of Coarse Aggregate And Fine Aggregate Content"""
+    if zone == "Zone 4":
+        i = 0
+    elif zone == "Zone 3":
+        i = 1
+    elif zone == "Zone 2":
+        i = 2
+    elif zone == "Zone 1":
+        i = 3
+    
+    for x, v in IS10262_t3.items():
+        if x == soa:
+            vol_CA = v[i]
+    
+    if wcr > 0.5:
+        vol_CA -= 0.01*((wcr - 0.5)/0.05)
+    else:
+        vol_CA += 0.01*((0.5 - wcr)/0.05)
+
+    if pumping == True:
+        vol_CA *= 0.9
+
+    vol_FA = 1 - vol_CA
+
+    return vol_CA, vol_FA
+
+def mix_calculation(cc, sp_c, wc, v_ca, v_fa, sp_ca, sp_fa, sp_chemad):
+    """Mix Calculations per unit volume of concrete"""
+    # Volume of cement
+    vol_cement = (cc/sp_c) * 0.001
+    print("\nVolume of cement = {:.4f} m^3".format(vol_cement))
+
+    # Volume of water
+    vol_water = wc * 0.001
+    print("\nVolume of water = {:.4f} m^3".format(vol_water))
+
+    # Volume of Chemical Admixture @ 2% by cementitious material
+    mass_of_chemAd = cc * 0.02
+    vol_chemAd = (mass_of_chemAd / sp_chemad) * 0.001
+    print("\nVolume of Chemical Admixture = {:.4f} m^3".format(vol_chemAd))
+
+    # Volume of all in aggregate
+    vol_all_aggr = (1 - (vol_cement + vol_water + vol_chemAd))
+    print("\nVolume of all in aggregate = {:.4f} m^3".format(vol_all_aggr))
+
+    # Mass of Coarse aggregate
+    mass_CA = vol_all_aggr * v_ca * sp_ca * 1000
+
+    # Mass of Fine aggregate
+    mass_FA = vol_all_aggr * v_fa * sp_fa * 1000
+
+    return mass_of_chemAd, mass_CA, mass_FA
+
+def fly_mix_calculation(cc, sp_c, wc, v_ca, v_fa, sp_ca, sp_fa, sp_fly, sp_chemad, fc):
+    """Mix Calculations per unit volume of concrete"""
+    # Volume of cement
+    vol_cement = (cc/sp_c) * 0.001
+    print("\nVolume of cement = {:.4f} m^3".format(vol_cement))
+
+    # Volume of fly ash
+    vol_flyash = (fc/sp_fly) * 0.001
+    print("\nVolume of fly ash = {:.4f} m^3".format(vol_flyash))
+
+    # Volume of water
+    vol_water = wc * 0.001
+    print("\nVolume of water = {:.4f} m^3".format(vol_water))
+
+    # Volume of Chemical Admixture @ 2% by cementitious material
+    mass_of_chemAd = cc * 0.02
+    vol_chemAd = (mass_of_chemAd / sp_chemad) * 0.001
+    print("\nVolume of Chemical Admixture = {:.4f} m^3".format(vol_chemAd))
+
+    # Volume of all in aggregate
+    vol_all_aggr = (1 - (vol_cement + vol_flyash + vol_water + vol_chemAd))
+    print("\nVolume of all in aggregate = {:.4f} m^3".format(vol_all_aggr))
+
+    # Mass of Coarse aggregate
+    mass_CA = vol_all_aggr * v_ca * sp_ca * 1000
+
+    # Mass of Fine aggregate
+    mass_FA = vol_all_aggr * v_fa * sp_fa * 1000
+
+    return mass_of_chemAd, mass_CA, mass_FA
+
+# Input from user and calling the function
+
+GRADE = input("\nEnter the Grade Designition (eg: M 40): ")
+GRADE = GRADE.upper()
+if len(GRADE) == 3:
+    GRADE = GRADE.replace('M', 'M ')
+
+print("\nWhich mineral admixture are you using?")
+print(""" [1] None [2] Fly ash """)
+min_ad = input("Choice (eg: 2): ")
+if min_ad == '1':
+    TYPE_OF_MINERAL_ADMIXTURE = ''
+elif min_ad == '2':
+    TYPE_OF_MINERAL_ADMIXTURE = "Fly ash"
+
+SIZE_OF_AGGREGATE = input("\nEnter the maximum nominal size of aggregate in mm: ")
+WORKABILITY = input("Enter the workability(slump) of cement in mm: ")
+EXPOSURE_CONDITION = input("Enter the exposure condition (eg: Moderate): ")
+
+METHOD_OF_PLACING = input("Will you pump the concrete? (yes or no): ")
+while True:
+    if METHOD_OF_PLACING.lower() == 'yes':
+        pumping = True
+        break
+    elif METHOD_OF_PLACING.lower() == 'no':
+        pumping = False
+        break
+    else:
+        print("Invalid Input!!")
+    METHOD_OF_PLACING = input("Will you pump the concrete? (yes or no): ")
+
+print("\nSelect the type of aggregate:")
+print(""" [1] Sub-Angular [2] Gravel [3] Rounded Gravel [4] Crushed Angular """)
+TYPE_OF_AGGREGATE = input("Choice (eg: 4): ")
+if TYPE_OF_AGGREGATE == "1":
+    toa = "Sub-Angular"
+elif TYPE_OF_AGGREGATE == "2":
+    toa = "Gravel"
+elif TYPE_OF_AGGREGATE == "3":
+    toa = "Rounded Gravel"
+else:
+    toa = ''
+
+print("\nSelect the type of chemical admixture:")
+print(""" [1] Super Plasticizer [2] Plasticizer """)
+CHEMICAL_ADMIXTURE = input("Choice (eg: 1): ")
+if CHEMICAL_ADMIXTURE == "1":
+    chem_ad = "Super Plasticizer"
+elif CHEMICAL_ADMIXTURE == "2":
+    chem_ad = "Plasticizer"
+
+SP_CEMENT = float(input("\nEnter specific gravity of CEMENT: "))
+
+if TYPE_OF_MINERAL_ADMIXTURE == "Fly ash":
+    SP_ADMIX = float(input("Enter specific gravity of FLY ASH: "))
+
+SP_CA = float(input("Enter specific gravity of COARSE aggregate: "))
+SP_FA = float(input("Enter specific gravity of FINE aggregate: "))
+SP_CHEMAD = float(input("Enter specific gravity of CHEMICAL ADMIXTURE (if not specified enter '1.145'): "))
+
+WATER_ABSORPTION_CA = float(input("Enter the water absorption of COARSE aggregates: "))
+WATER_ABSORPTION_FA = float(input("Enter the water absorption of FINE aggregates: "))
+
+print("\nSelect the zone of fine aggregates: ")
+print(""" [1] Zone 1 [2] Zone 2 [3] Zone 3 [4] Zone 4 """)
+ZONE_OF_FA = input("Choice: ")
+if ZONE_OF_FA == '1':
+    zone = "Zone 1"
+elif ZONE_OF_FA == '2':
+    zone = "Zone 2"
+elif ZONE_OF_FA == '3':
+    zone = "Zone 3"
+elif ZONE_OF_FA == '4':
+    zone = "Zone 4"
+
+# Checking whether to Surface moisture in aggregates is present or not
+CA_SURFACE_MOISTURE = input("\nIs surface moisture present in the COARSE aggregates? (yes or no): ")
+CA_SURF_MOISTURE = 0.0
+while True:
+    if CA_SURFACE_MOISTURE.lower() == 'yes':
+        CA_SURF_MOISTURE = float(input("Enter the surface moisture of COARSE aggregates: "))
+        break
+    elif CA_SURFACE_MOISTURE.lower() == 'no':
+        break
+    else:
+        print("Invalid Input!!")
+    CA_SURFACE_MOISTURE = input("\nIs surface moisture present in the COARSE aggregates? (yes or no): ")
+
+FA_SURFACE_MOISTURE = input("\nIs surface moisture present in the FINE aggregates? (yes or no): ")
+FA_SURF_MOISTURE = 0.0
+while True:
+    if FA_SURFACE_MOISTURE.lower() == 'yes':
+        FA_SURF_MOISTURE = float(input("Enter the surface moisture of FINE aggregates: "))
+        break
+    elif FA_SURFACE_MOISTURE.lower() == 'no':
+        break
+    else:
+        print("Invalid Input!!")
+    FA_SURFACE_MOISTURE = input("\nIs surface moisture present in the FINE aggregates? (yes or no): ")
+
+# Calculation block
+# Grading of Aggregate Adjustments
+# Calculation block for mix design
+# Determine the target strength for the given grade
+target_strength = target_strength_calculation(GRADE)
+print(f"\nTarget strength for {GRADE}: {target_strength} MPa")
+
+# Calculate the water-cement ratio for the given exposure condition
+water_cement_ratio = water_cement_ratio_calculation(EXPOSURE_CONDITION)
+print(f"\nWater-cement ratio for exposure condition '{EXPOSURE_CONDITION}': {water_cement_ratio}")
+
+# Calculate the water content based on slump, aggregate type, and chemical admixture
+water_content = water_content_calculation(WORKABILITY, SIZE_OF_AGGREGATE, TYPE_OF_AGGREGATE, CHEMICAL_ADMIXTURE)
+print(f"\nWater content based on slump of {WORKABILITY}mm: {water_content:.2f} kg/m³")
+
+# Calculate the cement content based on the selected water-cement ratio
+cement_content = cement_content_calculation(EXPOSURE_CONDITION, water_cement_ratio, water_content)
+print(f"\nCement content required: {cement_content:.2f} kg/m³")
+
+# If fly ash is used, calculate the cement and fly ash content
+if TYPE_OF_MINERAL_ADMIXTURE == "Fly ash":
+    cement_content, flyash_content, cement_saved, new_water_cement_ratio = fly_cement_content_calculation(
+        EXPOSURE_CONDITION, water_cement_ratio, water_content)
+    print(f"\nCement content: {cement_content:.2f} kg/m³")
+    print(f"Fly ash content: {flyash_content:.2f} kg/m³")
+    print(f"Cement saved by using fly ash: {cement_saved:.2f} kg/m³")
+    print(f"New water-cement ratio: {new_water_cement_ratio:.2f}")
+
+# Calculate the volume of coarse and fine aggregates based on zone and water-cement ratio
+vol_CA, vol_FA = vol_of_CAnFA_calculation(ZONE_OF_FA, SIZE_OF_AGGREGATE, water_cement_ratio, pumping)
+print(f"\nVolume of coarse aggregate: {vol_CA:.4f} m³")
+print(f"Volume of fine aggregate: {vol_FA:.4f} m³")
+
+# Now, calculate the mix for the given cement content, specific gravities, and aggregate volumes
+if TYPE_OF_MINERAL_ADMIXTURE == "Fly ash":
+    mass_of_chemAd, mass_CA, mass_FA = fly_mix_calculation(
+        cement_content, SP_CEMENT, water_content, vol_CA, vol_FA, SP_CA, SP_FA, SP_FLY, SP_CHEMAD, flyash_content)
+else:
+    mass_of_chemAd, mass_CA, mass_FA = mix_calculation(
+        cement_content, SP_CEMENT, water_content, vol_CA, vol_FA, SP_CA, SP_FA, SP_CHEMAD)
+
+# Display the results
+print(f"\nMass of chemical admixture: {mass_of_chemAd:.2f} kg")
+print(f"Mass of coarse aggregate: {mass_CA:.2f} kg")
+print(f"Mass of fine aggregate: {mass_FA:.2f} kg")
